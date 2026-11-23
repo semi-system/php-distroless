@@ -14,6 +14,9 @@ permissions:
   packages: write
   id-token: write
 
+env:
+  TRIVY_VERSION: "0.76.1"
+
 jobs:
   # Build and scan AMD64 images on Ubuntu 24.04.
   # Publish immutable digests before applying latest and <sha>-<date> tags.
@@ -46,13 +49,35 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Vulnerability gate (Trivy)
+      # Image dựa trên Baseless (ID=baseless) nên `trivy image` không đối chiếu
+      # CVE gói OS; chỉ dùng nó cho secret. CVE của gói Wolfi được quét bên dưới
+      # từ APK database của chính image.
+      - name: Secret gate (Trivy)
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: local/php-scan:${{ matrix.php }}-${{ matrix.flavor }}
-          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
-          ignore-unfixed: false
+          scanners: secret
+          version: v${{ env.TRIVY_VERSION }}
           exit-code: '1'
+
+      - name: Install pinned Trivy
+        run: |
+          mkdir -p .tools/bin .tools/downloads
+          curl -fsSL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" -o .tools/downloads/trivy.tar.gz
+          echo "c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0  .tools/downloads/trivy.tar.gz" | sha256sum -c -
+          tar -xzf .tools/downloads/trivy.tar.gz -C .tools/bin trivy
+
+      - name: CVE gate for Wolfi packages (Trivy SBOM)
+        run: |
+          set -euo pipefail
+          id="$(docker create local/php-scan:${{ matrix.php }}-${{ matrix.flavor }})"
+          mkdir -p dist
+          docker cp "${id}:/usr/lib/apk/db/installed" dist/installed
+          docker rm "${id}" >/dev/null
+          python3 scripts/apk_db_sbom.py --db dist/installed -o dist/php-wolfi.cdx.json
+          .tools/bin/trivy sbom --exit-code 1 \
+            --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
+            dist/php-wolfi.cdx.json
 
       - name: Login to GHCR
         if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)

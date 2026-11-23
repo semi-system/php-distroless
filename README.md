@@ -119,3 +119,9 @@ docker run --rm --entrypoint /bin/sh php-distroless:8.5-cli
 `.github/workflows/build.yml` uses Docker Buildx and Trivy for all matrix
 entries and builds `linux/amd64`. Releases publish immutable
 SHA/date tags plus `latest` only after the full strict gate passes.
+
+## CVE scanning
+
+These images are built on Baseless (`ID=baseless`), a distro Trivy does not recognize, so `trivy image` cannot match OS-package CVEs. CI uses it for secrets only and scans the real contents separately:
+
+- Wolfi packages: the image's APK database is converted to a CycloneDX SBOM (`scripts/apk_db_sbom.py`) with a `wolfi` OS component and scanned with `trivy sbom`. `baseless-*` packages are covered by the Baseless OSV gate.
